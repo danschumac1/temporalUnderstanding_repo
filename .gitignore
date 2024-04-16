@@ -1,0 +1,16 @@
+AQA_test.csv
+AQA_train.csv
+AQA_val.csv
+TQ.csv
+.env
+/wandb
+token.txt
+data/TQ
+data/TSQA
+data/final
+data/artifacts
+dataeval_packed_alpaca.jsonl
+eval_packed_alpaca.jsonl
+TQ_revised.csv
+TQ_revised.json
+train_packed_alpaca.jsonl
