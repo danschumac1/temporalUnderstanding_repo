@@ -14,3 +14,40 @@ eval_packed_alpaca.jsonl
 TQ_revised.csv
 TQ_revised.json
 train_packed_alpaca.jsonl
+
+# Ignore all log files
+*.log
+
+# Ignore temporary files created by text editors
+*~
+*.swp
+*.tmp
+
+# Ignore Python compiled files
+*.pyc
+*.pyo
+__pycache__/
+
+# Ignore wandb local directory
+wandb/
+
+# Ignore data directories containing potentially large files or personal data
+data/
+*.jsonl
+*.csv
+*.gz
+
+# Ignore model checkpoints which can be very large
+*.pt
+*.pth
+
+# Ignore output files
+*.out
+
+# Ignore specific directories with large or sensitive content
+model_outputs/
+Preprocessing/
+functions/__pycache__/
+
+# Ignore any .env files that contain environment variables
+.env
