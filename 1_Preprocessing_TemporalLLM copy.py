@@ -18,7 +18,6 @@ import json
 import wandb
 import numpy as  np
 
-
 #endregion
 #region # DATA READING
 # =============================================================================
@@ -36,12 +35,11 @@ test_path = './data/final/test.csv'
 train = pd.read_csv(train_path, index_col='Unnamed: 0')
 train['random_context'] = train['relevant_context'].shift(-1)
 train.loc[0, 'random_context'] = train['relevant_context'].iloc[-1]
-
+train[['random_context','relevant_context']].head(4)
 
 dev = pd.read_csv(dev_path, index_col='Unnamed: 0')
 dev['random_context'] = dev['relevant_context'].shift(-1)
 dev.loc[0, 'random_context'] = dev['relevant_context'].iloc[-1]
-
 
 test = pd.read_csv(test_path, index_col='Unnamed: 0')
 test['random_context'] = test['relevant_context'].shift(-1)
@@ -49,6 +47,8 @@ test.loc[0, 'random_context'] = test['relevant_context'].iloc[-1]
 
 # create a dataframe of them all...
 all_data = pd.concat([train, dev, test])
+all_data['type'].unique()
+all_data.head(5)['type']
 # convert to a dictionary for manipulation
 data_dict = all_data.to_dict()
 
@@ -101,25 +101,29 @@ GEMMA_no_context = []
 for q in data_dict['question'].values():
     example_GEMMA = f"{user_SOS_GEMMA}\n{q}{EOS_GEMMA}\n{model_SOS_GEMMA}"
     GEMMA_no_context.append(example_GEMMA)
+data_dict['GEMMA_no_context'] = GEMMA_no_context
+
 
 # RELEVANT CONTEXT
-GEMMA_no_context = []
+GEMMA_relevant_context = []
 for c,q in zip(data_dict['relevant_context'].values(), data_dict['question'].values()):
     example_GEMMA = f"{user_SOS_GEMMA}\n{c}\n\n{q}{EOS_GEMMA}\n{model_SOS_GEMMA}"
     GEMMA_no_context.append(example_GEMMA)
+data_dict['GEMMA_relevant_context'] = GEMMA_relevant_context
 
 # WRONG DATE CONTEXT
 GEMMA_wrong_date_context = []
 for c,q in zip(data_dict['wrong_date_context'].values(), data_dict['question'].values()):
     example_GEMMA = f"{user_SOS_GEMMA}\n{c}\n\n{q}{EOS_GEMMA}\n{model_SOS_GEMMA}"
     GEMMA_wrong_date_context.append(example_GEMMA)
+data_dict['GEMMA_wrong_date_context'] = GEMMA_wrong_date_context
 
 # RANDOM CONTEXT
 GEMMA_random_context = []
 for c,q in zip(data_dict['random_context'].values(), data_dict['question'].values()):
     example_GEMMA = f"{user_SOS_GEMMA}\n{c}\n\n{q}{EOS_GEMMA}\n{model_SOS_GEMMA}"
     GEMMA_random_context.append(example_GEMMA)
-
+data_dict['GEMMA_random_context'] = GEMMA_random_context
 
 #endregion
 #region # LLAMA-2 PREPROCESSING
@@ -139,24 +143,28 @@ llama_no_context = [
     f"{user_SOS_LLAMA} {system_prompt}\n{q}{EOS_LLAMA}" 
     for q in data_dict['question'].values()
 ]
+data_dict['llama_no_context'] = llama_no_context
 
 # RELEVANT CONTEXT PREPROCESSING
 llama_relevant_context = [
     f"{user_SOS_LLAMA} {system_prompt}\n{c}\n\n{q}{EOS_LLAMA}" 
     for c, q in zip(data_dict['relevant_context'].values(), data_dict['question'].values())
 ]
+data_dict['llama_relevant_context'] = llama_relevant_context
 
 # WRONG DATE CONTEXT
 llama_wrong_date_context = [
     f"{user_SOS_LLAMA} {system_prompt}\n{c}\n\n{q}{EOS_LLAMA}" 
     for c, q in zip(data_dict['wrong_date_context'].values(), data_dict['question'].values())
 ]
+data_dict['llama_wrong_date_context'] = llama_wrong_date_context
 
 # RANDOM CONTEXT
 llama_random_context = [
     f"{user_SOS_LLAMA} {system_prompt}\n{c}\n\n{q}{EOS_LLAMA}" 
     for c, q in zip(data_dict['random_context'].values(), data_dict['question'].values())
 ]
+data_dict['llama_random_context'] = llama_random_context
 
 # Example to verify the format
 #endregion
@@ -171,7 +179,7 @@ with open('./data/token.txt', 'r') as file:
 
 # GEMMA TOKENIZATION
 # Use the content as a string
-Gemma_model_id = 'google/gemma-7b'
+Gemma_model_id = 'google/gemma-2b-it'
 Gemma_tokenizer = AutoTokenizer.from_pretrained(Gemma_model_id, use_auth_token=token)
 # we are padding with "</s>"
 Gemma_tokenizer.pad_token = Gemma_tokenizer.eos_token
@@ -189,14 +197,41 @@ llama_tokenizer.pad_token = llama_tokenizer.eos_token
 # =============================================================================
 # I need to convert my data_dict obj into a list
 # With relevant context only
+data_dict.keys()
+# GEMMA
+    # no context
+    # rel context
+    # WD context
+    # random context
 
-dataset = [
-    {'prompt': p, 'output': o, 'example': p + o} for p, o in zip(
-        data_dict['no_context_prompt'],
-        data_dict['Answer']
-        )
-    ]
+# LLAMA-2
+    # no context
+    # rel context
+    # WD context
+    # random context
 
+data_dict.keys()
+iter_keys = ['llama_no_context', 'GEMMA_no_context', 'GEMMA_relevant_context', 'GEMMA_wrong_date_context', 'GEMMA_random_context', 'llama_relevant_context', 'llama_wrong_date_context', 'llama_random_context']
+iter_dict = {f'{k}_dataset':None for k in iter_keys}
+data_dict.keys()
+#endregion
+#region # GET THIS RIGHT PLEASE
+# =============================================================================
+# GET THIS RIGHT PLEASE
+# =============================================================================
+
+import sys
+
+for k in iter_keys:
+    print(k)
+    sys.stdout.flush()
+    iter_dict[f'{k}_dataset'] = [
+        {'prompt': prompt, 'output': answer, 'example': prompt + answer}
+        for prompt, answer in zip(data_dict[k], data_dict['answer'])]
+
+iter_dict.keys()
+
+# for d in iter_dict
 import random
 random.seed(27)
 random.shuffle(dataset)
@@ -218,7 +253,6 @@ with wandb.init(project="temporalUnderstanding", job_type="split_data"):
 # =============================================================================
 # PACKING
 # =============================================================================
-
 # @$@ Can I get away with more?  
 max_seq_length = 1024
 

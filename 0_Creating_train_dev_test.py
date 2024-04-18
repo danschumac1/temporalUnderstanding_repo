@@ -6,18 +6,22 @@ Created on 04/15/2024
 """
 #endregion
 #region # IMPORTS
-import pandas as pd
-import json
-import numpy as np
-import openai
-from openai import OpenAI
-from dotenv import load_dotenv
 import os
-os.getcwd()
-os.chdir('./TemporalUnderstandingInLLMs')
-import json
-from functions.homebrew import extract_output_values_from_json_file
+set_path = '/home/dan/TemporalUnderstandingInLLMs'
+os.chdir(set_path)
+
+import pandas as pd
+from concurrent.futures import ThreadPoolExecutor
+from tqdm import tqdm
 from sklearn.model_selection import train_test_split
+import numpy as np
+import spacy 
+import re
+from concurrent.futures import ProcessPoolExecutor
+
+# homebrewed functions
+from functions.homebrew import extract_output_values_from_json_file
+
 
 # REL
 rel_output = extract_output_values_from_json_file('./data/output/rel_context.out')
@@ -37,7 +41,7 @@ TQ_explicet.drop('index', axis=1, inplace=True)  # Drop the 'index' column now t
 
 TQ_explicet = TQ_explicet.rename(columns={'index':'idx', 'Question':'question','Answer':'answer'})
 # This dataset doesn't have  predefined train / dev / test splits
-TQ_explicet.columns
+
 # we will create a 70 15 15 split. (350, 75,75 obs)
 TQ_explicet_train, temp_df = train_test_split(TQ_explicet, test_size=0.3, random_state=27)
 TQ_explicet_dev, TQ_explicet_test = train_test_split(temp_df, test_size=0.5, random_state=27)
@@ -96,35 +100,56 @@ train['type'] = 'train'
 
 # DEV
 dev = pd.concat([TQ_explicet_dev, TSQA_dev_easy, TSQA_dev_hard], ignore_index=True)
-train['type'] = 'dev'
+dev['type'] = 'dev'
 
 # TEST
 test = pd.concat([TQ_explicet_test, TSQA_test_easy, TSQA_test_hard], ignore_index=True)
-train['type'] = 'test'
+test['type'] = 'test'
 
-# ALL 
-all_data = pd.concat([train, dev, test], ignore_index=True)
+
+
+
+#endregion
+#region # RANDOM CONTEXT
+# =============================================================================
+# RANDOM CONTEXT
+# =============================================================================
+train['random_context'] = train['relevant_context'].shift(-1)
+train.loc[0, 'random_context'] = train['relevant_context'].iloc[-1]
+
+dev['random_context'] = dev['relevant_context'].shift(-1)
+dev.loc[0, 'random_context'] = dev['relevant_context'].iloc[-1]
+
+test['random_context'] = test['relevant_context'].shift(-1)
+test.loc[0, 'random_context'] = test['relevant_context'].iloc[-1]
 
 #endregion
 #region # MIS-DATE-IFY
 # =============================================================================
 # MIS-DATE-IFY
 # =============================================================================
-import spacy
-import numpy as np
-import re
+nlp = None
 
-# Load the spaCy model
-nlp = spacy.load("en_core_web_sm")
+def init_nlp():
+    global nlp
+    nlp = spacy.load("en_core_web_sm", disable=['parser', 'tagger', 'attribute_ruler'])
+
+def process_context(context):
+    global nlp
+    original_dates, falsified_dates = extract_and_falsify_dates(context)
+    modified_context = context
+    for orig, fake in zip(original_dates, falsified_dates):
+        modified_context = re.sub(re.escape(orig), fake, modified_context)
+    return modified_context
 
 def generate_false_year(actual_year):
-    years = [year for year in range(1850, 2024) if year != actual_year]
+    years = np.setdiff1d(np.arange(1850, 2024), np.array([actual_year]))
     return np.random.choice(years)
 
 def generate_false_month(actual_month):
-    months = ["January", "February", "March", "April", "May", "June",
-              "July", "August", "September", "October", "November", "December"]
-    filtered_months = [month for month in months if month != actual_month]
+    months = np.array(["January", "February", "March", "April", "May", "June",
+                       "July", "August", "September", "October", "November", "December"])
+    filtered_months = months[months != actual_month]
     return np.random.choice(filtered_months)
 
 def safe_convert_to_int(s):
@@ -134,99 +159,56 @@ def safe_convert_to_int(s):
         return None
 
 def extract_and_falsify_dates(text):
+    global nlp
     doc = nlp(text)
     original_dates = [ent.text for ent in doc.ents if ent.label_ == "DATE"]
     falsified_dates = []
 
-    year_pattern = r'\b\d{4}\b'
-    
+    year_pattern = re.compile(r'\b\d{4}\b')
     for date in original_dates:
         new_date = []
+        months = np.array(["January", "February", "March", "April", "May", "June",
+                       "July", "August", "September", "October", "November", "December"])
         for part in date.split():
             if part in months:
                 new_date.append(generate_false_month(part))
-            elif re.match(year_pattern, part):
+            elif year_pattern.match(part):
                 year = safe_convert_to_int(part)
                 if year:
                     false_year = str(generate_false_year(year))
                     new_date.append(false_year)
                 else:
-                    new_date.append(part)  # Leave the part unchanged if it's not a valid year
+                    new_date.append(part)
             else:
                 new_date.append(part)
         falsified_dates.append(" ".join(new_date))
     
     return original_dates, falsified_dates
 
-
-from concurrent.futures import ThreadPoolExecutor
-from tqdm import tqdm
-
-def process_context(context):
-    original_dates, falsified_dates = extract_and_falsify_dates(context)
-    modified_context = context
-    for orig, fake in zip(original_dates, falsified_dates):
-        modified_context = re.sub(re.escape(orig), fake, modified_context)
-    return modified_context
-
-# Use ThreadPoolExecutor to parallelize processing
-with ThreadPoolExecutor(max_workers=4) as executor:
-    train_results = list(tqdm(executor.map(process_context, train['relevant_context']), total=len(train['relevant_context'])))
+# Process 'train' dataset
+with ProcessPoolExecutor(max_workers=4, initializer=init_nlp) as executor:
+    train_contexts = train['relevant_context']
+    train_results = list(tqdm(executor.map(process_context, train_contexts), total=len(train_contexts)))
 train['wrong_date_context'] = train_results
 
-
-with ThreadPoolExecutor(max_workers=4) as executor:
-    dev_results = list(tqdm(executor.map(process_context, dev['relevant_context']), total=len(dev['relevant_context'])))
-
+# Process 'dev' dataset
+with ProcessPoolExecutor(max_workers=4, initializer=init_nlp) as executor:
+    dev_contexts = dev['relevant_context']
+    dev_results = list(tqdm(executor.map(process_context, dev_contexts), total=len(dev_contexts)))
 dev['wrong_date_context'] = dev_results
 
-
-with ThreadPoolExecutor(max_workers=4) as executor:
-    test_results = list(tqdm(executor.map(process_context, test['relevant_context']), total=len(test['relevant_context'])))
-
+# Process 'test' dataset
+with ProcessPoolExecutor(max_workers=4, initializer=init_nlp) as executor:
+    test_contexts = test['relevant_context']
+    test_results = list(tqdm(executor.map(process_context, test_contexts), total=len(test_contexts)))
 test['wrong_date_context'] = test_results
 
 #endregion
-#endregion
-#region # RANDOM CONTEXT
-# =============================================================================
-# RANDOM CONTEXT
-# =============================================================================
-import pandas as pd
-
-# Assuming train, dev, and test are already defined DataFrames
-dataframes = {
-    'train': train,
-    'dev': dev,
-    'test': test
-}
-
-# Dictionary to store shuffled versions
-shuffled_dataframes = {}
-
-for name, df in dataframes.items():
-    # Shuffle the DataFrame
-    df_shuffled = df.sample(frac=1, random_state=27).reset_index(drop=True)
-
-    # Shift the 'relevant_context' to create 'random_context'
-    df_shuffled['random_context'] = df_shuffled['relevant_context'].shift(-1)
-
-    # Wrap around: setting the last element of 'random_context' to the first element of 'relevant_context'
-    df_shuffled['random_context'].iloc[-1] = df_shuffled['relevant_context'].iloc[0]
-
-    # Store the shuffled DataFrame
-    shuffled_dataframes[name] = df_shuffled
-
-    # Optionally print the modified DataFrame
-    print(f"Modified {name}:")
-    print(df_shuffled, "\n")
-
-
 #region # SAVE TO DISK
 # =============================================================================
 # SAVE TO DISK
 # =============================================================================
-os.getcwd()
-train.to_csv('./data/final/train.csv')
-dev.to_csv('./data/final/dev.csv')
-test.to_csv('./data/final/test.csv')
+train.to_csv('/home/dan/TemporalUnderstandingInLLMs/data/final/train.csv')
+dev.to_csv('/home/dan/TemporalUnderstandingInLLMs/data/final/dev.csv')
+test.to_csv('/home/dan/TemporalUnderstandingInLLMs/data/final/test.csv')
+#endregion
